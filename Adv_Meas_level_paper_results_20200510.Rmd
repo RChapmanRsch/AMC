@@ -1,0 +1,270 @@
+---
+title: 'Adv Meas: Level Paper Results'
+author: "Joseph DeWeese"
+date: "5/10/2020"
+output:
+  word_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r load packages, message = FALSE}
+
+library(irtoys)
+library(tidyverse)
+
+```
+
+
+```{r load data}
+
+load("level_sim_results.Rdata")
+load("level_sim_results_10k.Rdata")
+load("level_sim_results_10k2.Rdata")
+
+
+```
+
+
+```{r test info, eval = FALSE}
+
+tinfo <- map(out10k2$ips.toys, tif)
+d.tinfo <- tibble(x = tinfo$dim1$x,
+                  dim1 = tinfo$dim1$f,
+                  dim2 = tinfo$dim2$f,
+                  dim3 = tinfo$dim3$f) %>%
+  pivot_longer(-x, names_to = "dim", values_to = "info") %>%
+  mutate(sem = 1/sqrt(info)) %>%
+  pivot_longer(c(info, sem), names_to = "type", values_to = "value")
+
+# test info plot
+  g.infsem <- d.tinfo %>%
+    mutate(type = factor(type, levels = c("info", "sem"),
+                         labels = c("Test Information",
+                                    "Standard Error of Measurement"))) %>%
+    ggplot(aes(x, value)) + 
+    geom_line(aes(linetype = dim)) + 
+    theme_bw() + 
+    scale_linetype(labels = paste(1:3, "     ")) +
+    facet_wrap(vars(type), scales = "free_y", strip.position = "left") + 
+    labs(y = NULL,
+         x = expression(theta),
+         linetype = "Dimension") +
+    theme(strip.background = element_blank(),
+          strip.placement = "outside",
+          strip.text = element_text(size = 12), 
+          panel.spacing = unit(1.5, "lines"),
+          legend.position = "top")
+
+# # conditional SEM
+#   g.sem <- d.tinfo %>%
+#     mutate(sem = 1/sqrt(f)) %>%
+#     ggplot(aes(x, sem)) + 
+#     geom_line(aes(linetype = dim)) + 
+#     theme_bw() + 
+#     scale_linetype(labels = 1:3) +
+#     labs(y = "Standard Error of Measurement",
+#          x = expression(theta),
+#          linetype = "Dimension") + 
+#     scale_y_continuous(breaks = seq(0, 3, by = .5))
+  
+  g.infsem
+  
+  # ggsave("plot_Adv_Meas_paper_test info sem.pdf", g.infsem, height = 5, width = 9)
+
+```
+
+```{r sig rates table, results = 'asis'}
+
+# results <- data.frame(rbind(
+#   round(map_dbl(out10k2$lvls, ~ sum(.$p_val <= .05)/10000), 3),
+#   round(map_dbl(out10k2$lvls2, ~ sum(.$p_val <= .05)/10000), 3)
+# )) %>% mutate(corr = c("r = 0", "r = .05")) %>%
+#   select(corr, everything())
+
+results <- tibble(condition = names(out10k2$lvls),
+                  r0 = round(map_dbl(out10k2$lvls, ~ sum(.$p_val <= .05)/10000), 3),
+                  r5 = round(map_dbl(out10k2$lvls2, ~ sum(.$p_val <= .05)/10000), 3)
+                  )
+
+results %>%
+  papaja::apa_table(digits = 3)
+
+# both false positive rates significantly differnt than .05
+# prop.test(370, 10000, .05)
+# prop.test(451, 10000, .05)
+
+
+```
+
+```{r sem tables, results = 'asis'}
+
+sem.names <- c("dim1.sem", "dim2.sem", "dim3.sem")
+
+semtable <- bind_rows(
+  map_df(out10k2$ests, ~ round(colMeans(.[, sem.names]),3)),
+  map_df(out10k2$ests2, ~ round(colMeans(.[, sem.names]),3))
+  ) %>%
+  mutate(corr = c(rep("r0", 3), rep("r50",3)),
+         dim = paste("Dimension", rep(1:3,2))) %>%
+  pivot_longer(c(-dim, -corr)) %>%
+  unite("corrdim", corr, dim) %>%
+  pivot_wider(names_from = corrdim, values_from = value)
+
+semtable %>%
+  papaja::apa_table(digits = 3)
+
+```
+
+
+```{r real data example}
+
+d.thetas.w <- read_csv("d.thetas.w_from fall exploratory_20200511.csv")
+
+plot_dimx <- function(.data, n_col = 5){
+  mutate(.data, dim = str_remove(dim, "theta"),
+         occasion = str_replace(occasion, "t", "Time "),
+         subject = paste("Patient", subject)) %>%
+  ggplot(aes(dim, theta)) +
+  geom_line(aes(linetype = occasion, group = occasion)) +
+  geom_point() + 
+  scale_linetype_manual(values = c("solid", "dashed", "dotdash", "dotted")) +
+  facet_wrap(~ subject, ncol = n_col) +
+  labs(x = "Dimension", y = expression(theta), linetype = "Occasion") +
+  theme_bw(base_size = 11) + 
+  theme(legend.title = element_blank())
+}
+
+xtabs(~LRT_decision + level_decision, d.thetas.w)
+
+# LRT 0, level 0
+g.00 <- d.thetas.w %>%
+  filter(LRT_decision == 0, level_decision == 0) %>%
+  arrange(desc(LRT_stat)) %>%
+  slice(11:15) %>%
+  gather("occasion_dim", "theta", matches("^t[1-2]")) %>%
+  select(-matches("^t[3-4]")) %>%
+  separate("occasion_dim", c("occasion", "dim")) %>%
+  plot_dimx() + 
+  labs(title = "Neither significant") + 
+  coord_cartesian(ylim = c(-4, 4)) + 
+  theme(plot.title = element_text(size = 12))
+
+
+# LRT 0, level 1
+g.01 <- d.thetas.w %>%
+  filter(LRT_decision == 0, level_decision == 1) %>%
+  arrange(LRT_stat) %>%
+  slice(1:5) %>%
+  gather("occasion_dim", "theta", matches("^t[1-2]")) %>%
+  select(-matches("^t[3-4]")) %>%
+  separate("occasion_dim", c("occasion", "dim")) %>%
+  plot_dimx() +
+  labs(title = "Non-significant LRT, Significant Elevation") + 
+  coord_cartesian(ylim = c(-4, 4)) + 
+  theme(plot.title = element_text(size = 12))
+
+# LRT 1, level 0
+g.10 <- d.thetas.w %>%
+  filter(LRT_decision == 1, level_decision == 0) %>%
+  arrange(level_stat) %>%
+  slice(1:5) %>%
+  gather("occasion_dim", "theta", matches("^t[1-2]")) %>%
+  select(-matches("^t[3-4]")) %>%
+  separate("occasion_dim", c("occasion", "dim")) %>%
+  plot_dimx() +
+  labs(title = "Significant LRT, Non-significant Elevation") + 
+  coord_cartesian(ylim = c(-4, 4)) + 
+  theme(plot.title = element_text(size = 12))
+
+# LRT 1, level 1
+g.11 <- d.thetas.w %>%
+  filter(LRT_decision == 1, level_decision == 1) %>%
+  arrange(desc(LRT_stat)) %>%
+  slice(1:5) %>%
+  gather("occasion_dim", "theta", matches("^t[1-2]")) %>%
+  select(-matches("^t[3-4]")) %>%
+  separate("occasion_dim", c("occasion", "dim")) %>%
+  plot_dimx() +
+  labs(title = "Both Significant") + 
+  coord_cartesian(ylim = c(-4, 4)) + 
+  theme(plot.title = element_text(size = 12))
+
+g.all <- plot_grid(g.00, g.01, g.10, g.11, nrow = 4,
+                   labels = c("a)", "b)", "c)", "d)"))
+
+ggsave("plot_Adv_Meas_paper_LRT level.pdf", g.all, 
+       height = 8, width = 6.5)
+```
+
+
+```{r junk, eval = FALSE}
+
+
+map_dbl(out$lvls, ~ sum(.$p_val <= .05)/10)
+map_dbl(out10k$lvls, ~ sum(.$p_val <= .05)/100)
+
+map_dbl(out10k2$lvls, ~ round(mean(.$var$var2),3))
+map_dbl(out10k2$lvls2, ~ round(mean(.$var$var2),3))
+
+map_dbl(out10k2$lvls, ~ round(mean(sqrt(rowSums(.$var))),3))
+map_dbl(out10k2$lvls2, ~ round(mean(sqrt(rowSums(.$var))),3))
+
+map(out10k2$ests, ~ round(colMeans(.[, sem.names]),3))
+map(out10k2$ests2, ~ round(colMeans(.[, sem.names]),3))
+
+
+
+
+temp <- tibble(tavg = out10k$lvls$t_0$avg[[1]], pval = out10k$lvls$t_0$p_val)
+
+temp2 <- temp %>%
+  mutate(group1 = ntile(tavg, 10),
+         group2 = cut(tavg, c(-3, seq(-1.5, 1.5, by = .5), 3))) %>%
+  arrange(tavg)
+
+
+temp2 %>%
+  group_by(group1) %>%
+  summarise(mavg = mean(tavg),
+            pavg = mean(pval),
+            sig_avg = mean(pval < .05),
+            n = n()) %>%
+  ggplot(aes(mavg, sig_avg)) + 
+    geom_point() + 
+    geom_line() + 
+    ylim(c(0, .1)) + 
+    theme_bw()
+
+
+
+# non-constant change
+head(out$thetas$t_base)
+head(out$thetas$t_base + c(rep(1, 1000), rep(0,1000), rep(0,1000)))
+head(out$thetas$t_base + temp)
+
+temp <- matrix(c(rep(1, 1000), rep(1,1000), rep(0,1000)), ncol = 3)
+
+
+# using king yiu's tests
+    est.names <- c("dim1.est", "dim2.est", "dim3.est")
+    sem.names <- c("dim1.sem", "dim2.sem", "dim3.sem")
+
+map(out$ests$t_0, ~compare_level(.x[, est.names], .y[, est.names],
+                                                   .x[, sem.names], .y[, sem.names]))
+temp <- bind_cols(out$ests$t_base, out$ests$t_50)
+
+temp2 <- apply(temp,1, function(x) compare_shape(x[est.names],
+                                        x[paste0(est.names, 1)],
+                                        x[sem.names],
+                                        x[paste0(sem.names, 1)]))
+
+sum(map_dbl(temp2, "p_value") < .05)/1000
+```
+
